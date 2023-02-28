@@ -1,0 +1,1372 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+    <id>https://wannan123.github.io</id>
+    <title>爱踢足球的皖南</title>
+    <updated>2023-02-28T11:55:10.773Z</updated>
+    <generator>https://github.com/jpmonette/feed</generator>
+    <link rel="alternate" href="https://wannan123.github.io"/>
+    <link rel="self" href="https://wannan123.github.io/atom.xml"/>
+    <subtitle>此站用于记录点点滴滴</subtitle>
+    <logo>https://wannan123.github.io/images/avatar.png</logo>
+    <icon>https://wannan123.github.io/favicon.ico</icon>
+    <rights>All rights reserved 2023, 爱踢足球的皖南</rights>
+    <entry>
+        <title type="html"><![CDATA[CS144-Lab6]]></title>
+        <id>https://wannan123.github.io/post/cs144-lab6/</id>
+        <link href="https://wannan123.github.io/post/cs144-lab6/">
+        </link>
+        <updated>2023-02-28T08:52:58.000Z</updated>
+        <content type="html"><![CDATA[<h1 id="lab6the-router">Lab6（the router）</h1>
+<p>要结尾啦，这是最后一个lab，总算在自己规定的ttl内完成了所有的lab（小开心一下），本次的lab，是让在lab5网络接口的基础上完成路由转发和查找的一些内容，有点像lab1和2的resemble和receiver，实验帮我们已经构建好network的子类：异步网络接口类，我们只需要在router内调用即可。</p>
+<figure data-type="image" tabindex="1"><img src="https://wannan123.github.io/post-images/1677584602657.png" alt="" loading="lazy"></figure>
+<p>这里的网络接口就是每一个网卡的接口，一个路由有多个网卡用来打出帧，每个路由内存放的路由表来规定每一个网络接口将会去往的目的地。</p>
+<h2 id="2实现">2.实现</h2>
+<p>本次实验相对来说比较简单的，简单来说是一个查找和存储的算法，我没有用什么特殊的查找算法，就用的时间复杂度位O(n)的循环查找。然而实验的难点在于理解如何判断是否为需要查找的点。</p>
+<p>我们知道IP地址是一串二进制数，所以我们需要去对比每一位，所以我们这里运用到了 <strong>&amp;</strong> 运算符，对每一位取和，然而这是不够的，我们还需要掩码来规定要对比的位数，这里也就是文档里提到的前缀长度，我们需要对比的是前缀，比如18.64.0.0/16这里的前缀就是18.64，前缀长度为16位，这里我们就需要对IP取高len位与路由表里的前缀对比即可。</p>
+<pre><code class="language-c++">    struct router_table 
+    {
+        uint32_t route_prefix=0;
+        uint8_t prefix_length=0;
+        std::optional&lt;Address&gt; next_hop=std::nullopt;
+        size_t interface_num=0;
+    };
+    std::vector&lt;router_table&gt; router_list{};
+</code></pre>
+<p>上面我们自己需要添加的数据结构。</p>
+<pre><code class="language-c++">void Router::add_route(const uint32_t route_prefix,
+                       const uint8_t prefix_length,
+                       const optional&lt;Address&gt; next_hop,
+                       const size_t interface_num) {
+    cerr &lt;&lt; &quot;DEBUG: adding route &quot; &lt;&lt; Address::from_ipv4_numeric(route_prefix).ip() &lt;&lt; &quot;/&quot; &lt;&lt; int(prefix_length)
+         &lt;&lt; &quot; =&gt; &quot; &lt;&lt; (next_hop.has_value() ? next_hop-&gt;ip() : &quot;(direct)&quot;) &lt;&lt; &quot; on interface &quot; &lt;&lt; interface_num &lt;&lt; &quot;\n&quot;;
+
+    DUMMY_CODE(route_prefix, prefix_length, next_hop, interface_num);
+    router_list.push_back(router_table{route_prefix,prefix_length,next_hop,interface_num});
+    // Your code here.
+}
+
+//! \param[in] dgram The datagram to be routed
+void Router::route_one_datagram(InternetDatagram &amp;dgram) {
+    DUMMY_CODE(dgram);
+    // Your code here.
+    const uint32_t dst=dgram.header().dst;
+    bool is_found=false;
+    //start search
+    auto rt = router_list.end();
+    for(auto it=router_list.begin();it!=router_list.end();it++){
+        //看是是否为0或者取dst和前缀的高length位
+        //uint32_t offset = (it-&gt;prefix_length == 0) ? 0 : 0xffffffff &lt;&lt; (32 - it-&gt;prefix_length);
+        
+        if(it-&gt;prefix_length==0||(it-&gt;route_prefix ^ dst)&gt;&gt;(32-it-&gt;prefix_length)==0){
+            //取有效位最多的，更新一下
+            
+            if(!is_found||rt-&gt;prefix_length&lt;it-&gt;prefix_length){
+                is_found=true;
+                rt=it;
+            }
+        }
+    }
+    if(!is_found){
+        return;
+    }
+    if(dgram.header().ttl&lt;=1){
+        return;
+    }
+    dgram.header().ttl--;
+    
+    if(rt-&gt;next_hop.has_value()){
+        _interfaces[rt-&gt;interface_num].send_datagram(dgram, rt-&gt;next_hop.value());
+        
+    }
+    //如果为空则说明是最后一个需要的路由器，所以目的地址则是需要发送的下一跳
+    else{
+     _interfaces[rt-&gt;interface_num].send_datagram
+         (dgram,Address::from_ipv4_numeric(dgram.header().dst));
+    }
+
+
+    
+}
+</code></pre>
+<h2 id="lab7综合">Lab7（综合）</h2>
+<p>这里就是将上面所有lab进行一个总和，然后搭建出一个自己的TCP/IP 即时通讯协议。可以在自己的虚拟机开启两个终端一个当客户端一个当服务端，这里有个小问题，我先开启C再开启S才能连上（我也不知道为啥hhh）</p>
+<figure data-type="image" tabindex="2"><img src="https://wannan123.github.io/post-images/1677584615323.png" alt="" loading="lazy"></figure>
+<h2 id="总结">总结</h2>
+<p>wow，当看到Lab7我的客户端和服务端建立连接并且可以通讯的时候，我的脑海里浮现出这2个月的点点滴滴，从海南的旅游到回到老家，再到回到学校每一天都在吸收新知识，由于我计算机网络是没有学过的，所以做的还是比较慢的，是一边上网课一边做实验的，当然也很感谢Github大佬提供的博客思路，当然我也很希望我这套思路也能够帮助到更多人，OK，再不说什么了，去开新坑了哈哈哈哈</p>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[CS144-Lab5]]></title>
+        <id>https://wannan123.github.io/post/cs144-lab5/</id>
+        <link href="https://wannan123.github.io/post/cs144-lab5/">
+        </link>
+        <updated>2023-02-28T08:52:48.000Z</updated>
+        <content type="html"><![CDATA[<h1 id="lab5the-network-interface">Lab5（the network interface）</h1>
+<p>OK，又是忙碌的一周，由于对于网络层和链路层的不熟悉，我花了2，3天的时间去补郑老师第5章的内容，对路由和网络层有一个大致的了解后开启了本次的lab之旅。</p>
+<p>本次lab是让你实现一个network接口，也就是相当于网络层和链路层的接口，将IPv4地址（网络层）转化为MAC地址（链路层）的协议（ARP协议），是一个很有意思的lab，由于Stanford以及提供好官方的IPv4地址和ARPMessage，以太网地址（MAC）的类分装，我们只需要实现ARP协议的接口即可，相对lab4会简单很多啦</p>
+<figure data-type="image" tabindex="1"><img src="https://wannan123.github.io/post-images/1677584570942.png" alt="" loading="lazy"></figure>
+<p>这是整个实验的大致图，我们本次实验实现的是对Internet datagrams（IP数据报）解析为Ethernet frames（以太网数据报）的接口，在实验前，我们需要了解一ARP协议以及IPv4数据报的结构。</p>
+<h2 id="1arp协议">1.ARP协议</h2>
+<p>那么什么是ARP协议呢，ARP协议是地址解析协议，大致是将IP地址转化为MAC地址的一种协议。我们知道，主机或者路由器是不具备MAC地址的，只有他们的网络接口具备，我们的计算机网络是一层一层的结构，从TCP包分装成IP数据包，在分装成一帧打出去，MAC地址确定了这一帧打出去的目的地。</p>
+<p>没台主机或者路由都具备一个临时ARP表，上面相当于写好了局域网内各个IP对应MAC地址的一个集合，我们每次需要发送帧的时候需要查找ARP表如果在这个表上，我们直接用，如果不在表上，会进行一种Broadcast（广播）的操作，就相当于我们向多个主机询问IP以及MAC地址，然后去收集信息存到自己的表里。每个表里存放着目的IP地址，MAC地址，以及存活时间TTL（因为这是临时的表，所以需要）</p>
+<figure data-type="image" tabindex="2"><img src="https://wannan123.github.io/post-images/1677584583543.png" alt="" loading="lazy"></figure>
+<p>那么为什么需要有MAC地址呢？</p>
+<ul>
+<li>链路层不仅仅是为IP和因特网提供服务的</li>
+<li>IP地址是临时的，如果重启电脑或者换个地方安装主机或者路由器，都会重新配置</li>
+</ul>
+<h2 id="2网络结构实现">2.网络结构实现</h2>
+<p>首先我们需要明确我们的数据结构</p>
+<ul>
+<li>arp_table ：ARP表</li>
+<li>wait_to_address：用于ARP广播的时候存放已发出去的ARP请求但没有相应的包</li>
+<li>wait_to_ip_address ：用于存放需要发送的带有数据的帧，但没有明确mac地址的包</li>
+</ul>
+<pre><code class="language-c++">  struct arp
+    {
+        EthernetAddress ethernet_addrr;
+        size_t ttl; 
+    };
+    //arp表,uint32_t是ipv4地址
+    std::map&lt;uint32_t ,arp&gt; arp_table={};
+    const size_t table_default_time=1000*30;
+    std::map&lt;uint32_t,size_t&gt;wait_to_address={};
+    const size_t wait_arp_ttl =1000*5;
+    std::list&lt;std::pair&lt;Address,InternetDatagram&gt;&gt; wait_to_ip_address={};  
+
+    //! Ethernet (known as hardware, network-access-layer, or link-layer) address of the interface
+    EthernetAddress _ethernet_address;
+
+    //! IP (known as internet-layer or network-layer) address of the interface
+    Address _ip_address;
+
+    //! outbound queue of Ethernet frames that the NetworkInterface wants sent
+    std::queue&lt;EthernetFrame&gt; _frames_out{};
+</code></pre>
+<p>ps：这里我主要补了一下C++容器的知识以及迭代器的是用，这里不做过多介绍。</p>
+<ul>
+<li>
+<p><strong>send_datagram（）函数</strong></p>
+<p>这里的send函数可以主要判断是否在ARP表里，如果不在，则进行广播，如果在就直接发送就好，这里发送的原理和前几个lab的原理一样，放入队列即可。这里需要注意的是，我们是将ARPMessage数据报写好目的和原地址，然后分装成一个EthernetFrame(帧)发送的。在广播的时候是不需要写目的MAC地址的，因为广播的时候会将MAC地址自动写为**（FF-FF-FF-FF-FF-FF）<strong>，这样做的目的是为了让</strong>所有**子网上的其他适配器都接收到。</p>
+</li>
+</ul>
+<pre><code class="language-c++">void NetworkInterface::send_datagram(const InternetDatagram &amp;dgram, const Address &amp;next_hop) {
+    // convert IP address of next hop to raw 32-bit representation (used in ARP header)
+    const uint32_t next_hop_ip = next_hop.ipv4_numeric();
+    const auto &amp;it=arp_table.find(next_hop_ip);
+    
+    if(it==arp_table.end()){
+        //广播
+        if(wait_to_address.find(next_hop_ip)==wait_to_address.end()){
+            ARPMessage arp_mess;
+            arp_mess.opcode=ARPMessage::OPCODE_REQUEST;
+            arp_mess.sender_ip_address=_ip_address.ipv4_numeric();
+            arp_mess.sender_ethernet_address=_ethernet_address;
+            arp_mess.target_ip_address=next_hop_ip;
+            arp_mess.target_ethernet_address={};
+
+            //包装成以太网帧；
+            EthernetFrame ether_addr_frame;
+            ether_addr_frame.header()={ETHERNET_BROADCAST,_ethernet_address,EthernetHeader::TYPE_ARP};
+            ether_addr_frame.payload()=arp_mess.serialize();
+            _frames_out.push(ether_addr_frame);
+            wait_to_address[next_hop_ip]=wait_arp_ttl;
+            
+        }
+        wait_to_ip_address.push_back({next_hop,dgram});
+    }else{
+        EthernetFrame ether_addr_frame;
+        ether_addr_frame.header()={it-&gt;second.ethernet_addrr,_ethernet_address,EthernetHeader::TYPE_IPv4};
+        ether_addr_frame.payload()=dgram.serialize();//注意serialize的对象
+        _frames_out.push(ether_addr_frame);
+    }
+    
+}
+</code></pre>
+<ul>
+<li><strong>recv_frame （）函数</strong></li>
+</ul>
+<p>​		这里补了一下C++ optional的知识，大致意思就是让你的函数有两种返回值一种是像bool一样的对错返回值，一种是你想要的数据类型返回值（比如int，double，&quot;InternetDatagram&quot;），这里主要分为以下几种情况   ：如果是IPV4的包就返回正确，如果不是则需返回错误nullopt（情况分为1.不是自己的包，2.是一个ARP包）</p>
+<pre><code class="language-c++">optional&lt;InternetDatagram&gt; NetworkInterface::recv_frame(const EthernetFrame &amp;frame) {
+    //DUMMY_CODE(frame);
+    if(frame.header().dst!=_ethernet_address &amp;&amp;frame.header().dst!=ETHERNET_BROADCAST){
+        return std::nullopt;
+    }
+    //if ipv4
+    if(frame.header().type==EthernetHeader::TYPE_IPv4){
+        InternetDatagram datagram;
+        if(datagram.parse(frame.payload())!=ParseResult::NoError){
+            return std::nullopt;
+        }
+        return datagram;
+    }
+    //if arp
+    if(frame.header().type==EthernetHeader::TYPE_ARP){
+        ARPMessage messages_;
+        if(messages_.parse(frame.payload())!=ParseResult::NoError){
+            return std::nullopt;
+        }
+        const uint32_t &amp;ip_src=messages_.sender_ip_address;
+        const EthernetAddress &amp;ethernet_src=messages_.sender_ethernet_address;
+        const uint32_t &amp;ip_dst=messages_.target_ip_address;
+        const EthernetAddress &amp;ethernet_dst=messages_.target_ethernet_address;
+        //只有request是用ip来判断，因为request有可能是广播
+        //若是REPLY,mac地址必然知道
+        bool is_send_to_me=messages_.opcode==ARPMessage::OPCODE_REQUEST &amp;&amp; ip_dst == _ip_address.ipv4_numeric();
+        bool is_respone=messages_.opcode==ARPMessage::OPCODE_REPLY &amp;&amp; ethernet_dst== _ethernet_address;
+        if(is_send_to_me){
+            //就需要告知对方自己的消息
+            ARPMessage message_reply;
+            message_reply.opcode=ARPMessage::OPCODE_REPLY;
+            message_reply.sender_ip_address=_ip_address.ipv4_numeric();
+            message_reply.sender_ethernet_address=_ethernet_address;
+            message_reply.target_ip_address=ip_src;
+            message_reply.target_ethernet_address=ethernet_src;
+
+            EthernetFrame frame_;
+            frame_.header()={ethernet_src,_ethernet_address,EthernetHeader::TYPE_ARP};
+            frame_.payload()=message_reply.serialize();
+            _frames_out.push(frame_);
+
+        }
+        //更新arp_table表
+        if(is_send_to_me ||is_respone){
+            arp_table[ip_src]={ethernet_src,table_default_time};
+            //删除wait里的
+            for(auto item=wait_to_ip_address.begin();item!=wait_to_ip_address.end();){
+                if(item-&gt;first.ipv4_numeric()==ip_src){
+                    //重新发送附带正确Ethernet地址的帧
+                    send_datagram(item-&gt;second,item-&gt;first);
+                    item=wait_to_ip_address.erase(item);
+                }
+                else{
+                    ++item;
+                }
+            }wait_to_address.erase(ip_src);
+        }
+    }
+    return std::nullopt;
+}
+</code></pre>
+<ul>
+<li>
+<p><strong>tick（）函数</strong></p>
+<p>这里的函数很类似与前面的lab的计时器，需要注意的点在更新arp表</p>
+</li>
+</ul>
+<pre><code class="language-c++">void NetworkInterface::tick(const size_t ms_since_last_tick) { 
+    DUMMY_CODE(ms_since_last_tick);
+    for(auto item=arp_table.begin();item!=arp_table.end();){
+        if(ms_since_last_tick&gt;=item-&gt;second.ttl){
+            item=arp_table.erase(item);
+        }
+        else{
+            item-&gt;second.ttl-=ms_since_last_tick;
+            ++item;
+        }
+    }
+    for(auto item=wait_to_address.begin();item!=wait_to_address.end();){
+        if (ms_since_last_tick&gt;=item-&gt;second)
+        {
+            //如果超时，则重新广播
+            ARPMessage messages_;
+            messages_.opcode=ARPMessage::OPCODE_REQUEST;
+            messages_.sender_ip_address=_ip_address.ipv4_numeric();
+            messages_.sender_ethernet_address=_ethernet_address;
+            messages_.target_ip_address=item-&gt;first;
+            messages_.target_ethernet_address={};
+
+            EthernetFrame frame_;
+            frame_.header()={ETHERNET_BROADCAST,_ethernet_address,EthernetHeader::TYPE_ARP};
+            frame_.payload()=messages_.serialize();
+            _frames_out.push(frame_);
+            item-&gt;second=wait_arp_ttl;
+        }
+        else{
+            item-&gt;second-=ms_since_last_tick;
+            ++item;
+        }
+    }
+}
+</code></pre>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[CS144-Lab4]]></title>
+        <id>https://wannan123.github.io/post/cs144-lab4/</id>
+        <link href="https://wannan123.github.io/post/cs144-lab4/">
+        </link>
+        <updated>2023-02-28T08:52:36.000Z</updated>
+        <content type="html"><![CDATA[<h1 id="lab4the-tcp-connection">Lab4（the TCP connection）</h1>
+<p>lab4是一项非常难的工程，由于这周回到学校了，效率不是很高，这个lab花了我足足1周的时间，文档读了3天左右2天改代码，两天调试，真的很累人，这次的实验算是前面几次里难度最高的，不管是从文档角度来说还是从代码和调试角度来说，都是一个维度的跳跃，因为前面几次的lab我做完后都有核对github上各位大佬的代码，所以我的tcp_sender和receiver的鲁棒性都很高，我在写代码的时候没有遇到雷人的需要去改之前的代码的情况，这虽然方便了自己，但是还是缺少了很多锻炼自己的能力。</p>
+<p>本次实验的难点我认为在于理解TCP有限状态机的各个状态，也就是segment_received函数中各个判断条件，这次的实验是结合lab3和lab2的sender和receiver来做的他其实就是想让你站在一个更高的角度来俯瞰整个状态，就是不管是client端还是server段你都需要考虑sender和receiver的状态，sender和receiver结合成connection存在与两端。</p>
+<h2 id="1tcp的三次握手和四次挥手">1.TCP的三次握手和四次挥手</h2>
+<p>TCP的有限状态机分为三次握手和四次挥手，理解这一点很重要</p>
+<ul>
+<li>三次握手<br>
+<img src="https://wannan123.github.io/post-images/1677584528252.png" alt="" loading="lazy"></li>
+</ul>
+<p>我们在还没有建立连接的时候服务端是保持LISTEN状态的，当客户端发起请求的时候，发送SYN=1（第一次握手）服务端接收到这个SYN然后给一个确认ACK=1,并且也发送一个SYN=1（第二次握手）在客户端发送出去SYN的时候他是处于SYN -SENT状态的，服务段发送确认和SYN的时候服务端处于SYN-RCVD状态，当客户端接收到服务端发送的SYN后也要给一个确认给客户端（第三次握手）并且发送数据，这样就达成了建立。</p>
+<p>但有人会问为什么不是两次握手呢？就好比小明想给小红表白寄信，第一次小明发送我喜欢你（第一次握手），但是由于快递员记错位置了很长时间都没有送到，于是他又发送了一次我喜欢你，这次小红收到了信，也发送我也喜欢你并且送上了一束花（数据）（第二次握手）从此他们幸福的在一起了，但是突然有一天分手了，这个时候小明一开始发送的第一封信终于送到小红手里了小红以为小明要复合，于是再次发送我也喜欢你并且送上了一束花（数据）但是小明很渣，他就没离小红于是小红一直以为小明没有收到信，所以一直发送数据，这样就导致过度的浪费资源了。但是如果用三次握手的话，第二次小红给小明发送我也喜欢你的时候是不需要送花的，只有当小明知道小红也喜欢他的时候这样小明再发一次那我们在一起吧（第三次握手）并且送花，这样就会避免数据缺失，但是有人会问难道小红发送的时候不会延迟嘛，因为小明他受到的是SYN和一个ACK，所以这个时刻只有小明知道自己之前有没有发送请求。当然也有很多复杂的情况，但是三次握手能相对的解决大部分问题。</p>
+<ul>
+<li>四次挥手</li>
+</ul>
+<figure data-type="image" tabindex="1"><img src="https://wannan123.github.io/post-images/1677584539330.png" alt="" loading="lazy"></figure>
+<p>四次挥手用通俗的话来说就是，小明想要给向红说咱们分手把（第一次挥手）小红收到信后，发送好的我同意你的分手（第二次挥手）但是你得等我给你送一点最后的分手礼物，当小红送完了，发送好了，现在可以分手了（第三次挥手）小明收到后发送，那你关机吧（第四次挥手）这个时候小明会等待一段时间，如果这个时间里在没有收到小红的第三次挥手的信，小明会自动关机，小红收到信后也会关机，这样就保持了双方都能关机。</p>
+<p>在客户端的FIN-WAIT-1到接收到服务段的FIN的时候客户端的receiver都是开启的。</p>
+<p>代码来说，我们需要注意的点是用seg的头部syn，ack的布尔值和receiver，sender的各个方法来确认个状态，我们用sender发送空的segment来代表ack，并且要注意在建立状态的时候要时不时发送一个空的segment来确保是连接状态</p>
+<pre><code class="language-c++">void TCPConnection::segment_received(const TCPSegment &amp;seg) {
+   // 非启动时不接收
+   if (!active_) {
+       return;
+   }
+
+   // 重置连接时间
+   ms_since_last = 0;
+
+   // RST标志，直接关闭连接
+   if (seg.header().rst) {
+       // 在出站入站流中标记错误，使active返回false
+       _receiver.stream_out().set_error();
+       _sender.stream_in().set_error();
+       active_ = false;
+   }
+   // 当前是Closed/Listen状态
+   else if (_sender.next_seqno_absolute() == 0) {
+       // 收到SYN，说明TCP连接由对方启动，进入Syn-Revd状态
+       if (seg.header().syn) {
+           // 此时还没有ACK，所以sender不需要ack_received
+           _receiver.segment_received(seg);
+           // 我们主动发送一个SYN
+           connect();
+       }
+   }
+   // 当前是Syn-Sent状态
+   else if (_sender.next_seqno_absolute() == _sender.bytes_in_flight() &amp;&amp; !_receiver.ackno().has_value()) {
+       if (seg.header().syn &amp;&amp; seg.header().ack) {
+           // 收到SYN和ACK，说明由对方主动开启连接，进入Established状态，通过一个空包来发送ACK
+           _sender.ack_received(seg.header().ackno, seg.header().win);
+           _receiver.segment_received(seg);
+           _sender.send_empty_segment();
+           send_merge_segment();
+       } else if (seg.header().syn &amp;&amp; !seg.header().ack) {
+           // 只收到了SYN，说明由双方同时开启连接，进入Syn-Rcvd状态，没有接收到对方的ACK，我们主动发一个
+           _receiver.segment_received(seg);
+           _sender.send_empty_segment();
+           send_merge_segment();
+       }
+   }
+   // 当前是Syn-Revd状态，并且输入没有结束
+   else if (_sender.next_seqno_absolute() == _sender.bytes_in_flight() &amp;&amp; _receiver.ackno().has_value() &amp;&amp;
+            !_receiver.stream_out().input_ended()) {
+       // 接收ACK，进入Established状态
+       _sender.ack_received(seg.header().ackno, seg.header().win);
+       _receiver.segment_received(seg);
+   }
+   // 当前是Established状态，连接已建立
+   else if (_sender.next_seqno_absolute() &gt; _sender.bytes_in_flight() &amp;&amp; !_sender.stream_in().eof()) {
+       // 发送数据，如果接到数据，则更新ACK
+       _sender.ack_received(seg.header().ackno, seg.header().win);
+       _receiver.segment_received(seg);
+       if (seg.length_in_sequence_space() &gt; 0) {
+           _sender.send_empty_segment();
+       }
+       _sender.fill_window();
+       send_merge_segment();
+   }
+   // 当前是Fin-Wait-1状态
+   else if (_sender.stream_in().eof() &amp;&amp; _sender.next_seqno_absolute() == _sender.stream_in().bytes_written() + 2 &amp;&amp;
+            _sender.bytes_in_flight() &gt; 0 &amp;&amp; !_receiver.stream_out().input_ended()) {
+       if (seg.header().fin) {
+           // 收到Fin，则发送新ACK，进入Closing/Time-Wait
+           _sender.ack_received(seg.header().ackno, seg.header().win);
+           _receiver.segment_received(seg);
+           _sender.send_empty_segment();
+           send_merge_segment();
+       } else if (seg.header().ack) {
+           // 收到ACK，进入Fin-Wait-2
+           _sender.ack_received(seg.header().ackno, seg.header().win);
+           _receiver.segment_received(seg);
+           send_merge_segment();
+       }
+   }
+   // 当前是Fin-Wait-2状态
+   else if (_sender.stream_in().eof() &amp;&amp; _sender.next_seqno_absolute() == _sender.stream_in().bytes_written() + 2 &amp;&amp;
+            _sender.bytes_in_flight() == 0 &amp;&amp; !_receiver.stream_out().input_ended()) {
+       _sender.ack_received(seg.header().ackno, seg.header().win);
+       _receiver.segment_received(seg);
+       _sender.send_empty_segment();
+       send_merge_segment();
+   }
+   // 当前是Time-Wait状态
+   else if (_sender.stream_in().eof() &amp;&amp; _sender.next_seqno_absolute() == _sender.stream_in().bytes_written() + 2 &amp;&amp;
+            _sender.bytes_in_flight() == 0 &amp;&amp; _receiver.stream_out().input_ended()) {
+       if (seg.header().fin) {
+           // 收到FIN，保持Time-Wait状态
+           _sender.ack_received(seg.header().ackno, seg.header().win);
+           _receiver.segment_received(seg);
+           _sender.send_empty_segment();
+           send_merge_segment();
+       }
+   }
+   // 其他状态
+   else {
+       _sender.ack_received(seg.header().ackno, seg.header().win);
+       _receiver.segment_received(seg);
+       _sender.fill_window();
+       send_merge_segment();
+   }
+}
+</code></pre>
+<h2 id="2write部分">2.write部分</h2>
+<p>这一部分应该是相对来说简单的，因为指导书上有说到如何开始，我们可以从write部分开始。</p>
+<p>如何发送呢？其实connection就是将receiver的ack和窗口大小与sender中的segment相结合然后放在一个队列上，发送出去（和sender的原理很像）这里我们需要自己写一个函数来解决合并问题</p>
+<pre><code class="language-c++">void TCPConnection::send_merge_segment() {
+   // 将sender中的数据保存到connection中
+   while (!_sender.segments_out().empty()) {
+       TCPSegment seg = _sender.segments_out().front();
+       _sender.segments_out().pop();
+       // 设置ackno和window_size
+       if (_receiver.ackno().has_value()) {
+           seg.header().ack = true;
+           seg.header().ackno = _receiver.ackno().value();
+           seg.header().win = _receiver.window_size();
+       }
+       _segments_out.push(seg);
+   }
+   // 如果发送完毕则结束连接
+   if (_receiver.stream_out().input_ended()) {
+       if (!_sender.stream_in().eof()) {
+           _linger_after_streams_finish  = false;
+       }
+
+       else if (_sender.bytes_in_flight() == 0) {
+           if (!_linger_after_streams_finish || time_since_last_segment_received() &gt;= 10 * _cfg.rt_timeout) {
+               active_ = false;
+           }
+       }
+   }
+}
+</code></pre>
+<p>其次我们需要一个解决rsp问题的函数，也就是如果发生了错误，我们需要发送一个rsp段并且关闭连接，这个错误通常在于超时次数过多。</p>
+<pre><code class="language-c++">void TCPConnection::deal_rsp(bool send_rst) {
+   // 发送RST标志
+   if(send_rst){
+        TCPSegment seg;
+        seg.header().rst = true;
+        _segments_out.push(seg);
+   }
+
+
+   // 在出站入站流中标记错误，使active返回false
+   _receiver.stream_out().set_error();
+   _sender.stream_in().set_error();
+   active_ = false;
+}
+</code></pre>
+<p>和判断是否超时的函数</p>
+<pre><code class="language-c++">void TCPConnection::tick(const size_t ms_since_last_tick) {
+   // 非启动时不接收
+   if (!active_) {
+       return;
+   }
+
+   // 保存时间，并通知sender
+   ms_since_last+= ms_since_last_tick;
+   _sender.tick(ms_since_last_tick);
+
+   // 超时需要重置连接
+   if (_sender.consecutive_retransmissions() &gt; TCPConfig::MAX_RETX_ATTEMPTS) {
+       deal_rsp(true);
+       return;
+   }
+   send_merge_segment();
+}
+</code></pre>
+<p>接下来就是相对比较简单的连接函数，写函数，以及结束发送函数了</p>
+<pre><code class="language-c++">size_t TCPConnection::write(const string &amp;data) {
+   if (data.empty()) {
+       return 0;
+   }
+
+   // 在sender中写入数据并发送
+   size_t size = _sender.stream_in().write(data);
+   _sender.fill_window();
+   send_merge_segment();
+   return size;
+}
+
+void TCPConnection::connect() {
+   // 主动启动，fill_window方法会发送Syn
+   _sender.fill_window();
+   send_merge_segment();
+}
+//析构函数
+TCPConnection::~TCPConnection() {
+   try {
+       if (active()) {
+           cerr &lt;&lt; &quot;Warning: Unclean shutdown of TCPConnection\n&quot;;
+
+           // Your code here: need to send a RST segment to the peer
+           deal_rsp(false);
+       }
+   } catch (const exception &amp;e) {
+       std::cerr &lt;&lt; &quot;Exception destructing TCP FSM: &quot; &lt;&lt; e.what() &lt;&lt; std::endl;
+   }
+}
+</code></pre>
+<p>因为sender的fill_window自带发送fin和syn的效果，所以直接调用就行了。</p>
+<p>调试的话就用wireshark抓包，具体可以上知乎查查细节，本次实验是模拟一个虚拟网卡在本机上建立服务器和客户端来通信的，最后可以运行玩完，自此CS144的5个lab终于做完了，我也在思考要不要继续往下走，做完lab5,6</p>
+<p>加油吧！</p>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[CS144-Lab3]]></title>
+        <id>https://wannan123.github.io/post/cs144-lab3/</id>
+        <link href="https://wannan123.github.io/post/cs144-lab3/">
+        </link>
+        <updated>2023-02-28T08:52:00.000Z</updated>
+        <content type="html"><![CDATA[<h1 id="lab3the-tcp-sender">Lab3（the TCP sender）</h1>
+<p>omg，终于做完lab3了，lab3真的是一个难度的大跳跃，整个难度一下子就上来了，本次实验用时大概有5天的时间，从读文档到最后完成lab，真的是一段艰难的旅途。本次实验的文档让人很难理解，就是读完其实也是很模糊它到底想让我们实现什么内容，所以让我花费的时间很多，大概足足有2天半的时间来读文档和思考，不像之前的实验读完就比较好理解到底是想做什么，本次实验我也是在写代码前做了很多思维导图，去整理逻辑。在改bug的时候也是异常艰难，我感觉不能再单纯的是用cerr了，得找个时间好好学习一下gdb或者其他调试工具。总之这次的实验让我非常头疼hhh不过想到lab4会更难，我还是坚持了下来！还是先看看总体图吧！：</p>
+<figure data-type="image" tabindex="1"><img src="https://wannan123.github.io/post-images/1677584482956.png" alt="" loading="lazy"></figure>
+<p>我们这次实验是实现一个TCP Sender，也就是发送器，其中也有两大难点：</p>
+<ul>
+<li>重发计时器的启动，关闭，重启，判断超时。</li>
+<li>理解Sender的工作流程以及原理。</li>
+</ul>
+<p>那么我们开启Lab3之旅吧！</p>
+<h2 id="1实现重发计时器">1.实现重发计时器</h2>
+<p>首先要理解文档里的重发计时器到底是怎么工作的，一开始我也很纳闷如果不用系统时间函数那怎么记时呢？随着看完他的函数申明后，是给一个<em>ms_since_last_tick</em>d 的参数的，也就是测试用例会时不时的调用tick函数给一个距离上次调用这个函数的时间，也就是说测试用例会给你一个数字，代表过去的时间。根据文档的建议，我将它封装成一个time_类，然后实现它的功能。</p>
+<p>第二点我们要知道重发计时器有什么用：我们知道报文在传输的时候会遇到各种困难，有可能会丢失，为了解决这个问题我们需要重新发送报文，但是这个重新发送需要有一定的限制，它的时间阈值是动态的，每当超过这个阈值sender还没有收到receiver的ack时我们需要重新发送之前的报文。在一开始会认为是每次发送一段segment都要记录一下，其实不然。本实验的意思就是记录最初没有收到ack的报文，当收到报文的ack时重新发送这段数据包就可以啦，其次是这个动态阈值是如何变化的，为何变化的：因为网络的拥堵不是定值，只要发生一次需要重传，我们都需要将阈值扩大，因为既然发生了拥堵，就说明我们需要多等待一会儿。</p>
+<p>我们还需要一个值来记录在一次segment发送后到接收到ack一共经历了多少次重传,这里默认重发计时器是关闭的</p>
+<pre><code class="language-c++">class time_{
+  private:
+
+    bool is_start=false;
+    unsigned int init_time;
+    unsigned int now_time;
+    unsigned int judge_time;
+
+  public:
+  unsigned int count_time=0;
+    time_(const uint16_t retx_time)
+      :init_time(retx_time)
+      ,now_time(0)
+      ,judge_time(retx_time){}
+    bool isstart(){
+      return is_start;
+    }
+    void active(){
+      is_start=true;
+      judge_time=init_time;
+      count_time=0;
+      now_time=0;
+    }
+    void close_(){
+      is_start=false;
+      judge_time=init_time;
+      count_time=0;
+      now_time=0;
+    }
+    void restart(){
+      is_start=true;
+      now_time=0;
+    }
+    void double_time(const size_t _last_window_size,TCPSegment &amp;seg){
+      if(!is_start){
+        return;
+      }
+      if(_last_window_size!=0||seg.header().syn){
+          
+        judge_time=judge_time&lt;&lt;1;
+
+        count_time++;
+      }
+      
+    }
+    bool tick_time(const size_t ms_since_last_tick){
+      
+      if(!is_start){
+        return false;
+      }
+      now_time+=ms_since_last_tick;
+      if(now_time&gt;=judge_time){
+          return true;
+      }
+      
+      return false;
+    }
+};
+</code></pre>
+<p>注：这里的启动关闭和重启函数的实现要具体到调用，其中我的逻辑是一旦接收到ack就关闭计时器，将所有参数归为最原始的数据。如果在普通发送的时候计时器没有开启，我们便将它开启调用active()函数即可。在检查是否超时的时候，如果超时了就重发，重发只需要修改累计时间和累计次数，我们需要调用tick_time()，double_time()，以及restart()函数，所以每一个函数的实现都是由讲究滴~</p>
+<h2 id="2sender的具体实现">2.Sender的具体实现</h2>
+<p>首先我们需要明确Sender的工作流程：</p>
+<pre><code>1. 调用fill_window（）函数，判断是否是段尾（FIN) 或者段头（SYN）如果是SYN是不需要传数据的，直接修改TCPsegment的头部即可，FIN在本实验中是可以携带信息的，可以在后面处理。
+
+1. 调用send_segment（）函数，这个函数是自己写的，也就是发送函数，这个函数的使用者是fill_window（）
+2. 时不时调用tick函数来检查是否超时，如果超时就重新发送。
+3. 调用ack_received（）函数来接收已经成功发送的段的ack，并关闭重发计时器。
+</code></pre>
+<p>我们需要注意几个细节。</p>
+<pre><code>*	文档里说了窗口的设置：如果receiver返回的窗口大小为0，也就是说明接收器满了，希望sender再别发送了，这时候其实就有个问题，sender什么时候知道receiver有空能接收数据呢？我们需要手动将window改为1，这样就可以不断的发送小的数据报，直到接收器由空他就可以返回ack，继续发送了
+*	segment一直放在wait_seg里，每当要重新传时，放入seg_out里，当接收到ack时就pop掉wait_seg。每次需要发送的时候就取wait_seg的头部就好了，这里不需要pop掉seg_out，这里的pop好像在测试用例还是哪里已经帮我们实现了
+*	所谓的发送的数据报就是放到seg_out里
+*	我们需要理解一下边界：
+</code></pre>
+<figure data-type="image" tabindex="2"><img src="https://wannan123.github.io/post-images/1677584506734.png" alt="" loading="lazy"></figure>
+<h4 id="1fill_window函数">1.fill_window（）函数</h4>
+<p>我们需要注意发送的内容时从stream里read()出来的，大小也就是上图中黄色的部分，并且我们需要判断一下正在发送的内容有没有越界，</p>
+<pre><code class="language-c++">void TCPSender::fill_window() {
+    size_t window_sizes = receiver_window_size_ &gt; 0 ?receiver_window_size_ : 1;
+    TCPSegment segment;
+    if(is_fin){
+        return;
+    }
+
+    if(!is_syn){
+        
+        segment.header().syn=true;
+        segment.header().seqno=next_seqno();
+        wait_ack.push(segment);
+        send_segment(segment);
+        is_syn=true;
+        return;
+    }
+    
+    if (_next_seqno == bytes_in_flights) {
+        return;
+    }
+
+    if(_stream.eof() &amp;&amp; window_sizes&gt;_next_seqno-rece_seqno){
+        is_fin=true;
+        segment.header().fin=true;
+        segment.header().seqno=next_seqno();
+        wait_ack.push(segment);
+        send_segment(segment);
+        return;
+    }
+    while(!_stream.buffer_empty()&amp;&amp;window_sizes&gt;_next_seqno-rece_seqno){
+        size_t size=min(TCPConfig::MAX_PAYLOAD_SIZE,static_cast&lt;size_t&gt;(window_sizes-(_next_seqno-rece_seqno)));
+        
+        segment.payload()=Buffer(_stream.read(min(size,_stream.buffer_size())));
+        if(_stream.eof()&amp;&amp;segment.length_in_sequence_space()&lt;window_sizes){
+            is_fin=true;
+            segment.header().fin=true;
+        }
+        if (segment.length_in_sequence_space() == 0)return;
+        segment.header().seqno=next_seqno();
+        wait_ack.push(segment);
+        send_segment(segment);
+    }
+
+
+}
+</code></pre>
+<h4 id="2send_segment函数">2.send_segment()函数</h4>
+<p>这里就需要记录一下已经发送但还没有接收的字节有多少，并且开启计时器</p>
+<pre><code class="language-c++">void TCPSender::send_segment(TCPSegment &amp;segment) {
+ 
+    _segments_out.push(segment);
+    bytes_in_flights+=segment.length_in_sequence_space();
+    
+    _next_seqno+=segment.length_in_sequence_space();
+    //累计的，不是每次重启
+    if(!re_time_.isstart()){
+ 
+        re_time_.active();
+        re_time_.restart();//reboot;
+    }
+}
+</code></pre>
+<h4 id="3ack_received函数">3.ack_received()函数</h4>
+<p>我们首先要判断一下接收到的ack是否是在蓝色的段中，也就是正在发送的范围内，并且记录接收器的窗口大小，重启计时器，并且判断是否需要关闭计时器。</p>
+<pre><code class="language-c++">void TCPSender::ack_received(const WrappingInt32 ackno, const uint16_t window_size) { 
+    DUMMY_CODE(ackno, window_size); 
+
+    uint64_t ack_no=unwrap(ackno,_isn,_next_seqno);
+    if(ack_no&gt;_next_seqno){
+        cerr&lt;&lt;receiver_window_size_&lt;&lt;endl;
+        return;
+    }
+    receiver_window_size_=window_size;
+   
+    if(ack_no&lt;=rece_seqno){
+        return;
+    }
+    if(ack_no&gt;rece_seqno){
+        rece_seqno=ack_no;
+        
+    }
+
+    pop_=false;
+    re_time_.active(); 
+    
+    while (!wait_ack.empty())
+    {   
+        
+        TCPSegment seg=wait_ack.front();
+
+        if (ack_no &lt;unwrap(seg.header().seqno, _isn, _next_seqno) + seg.length_in_sequence_space()) {
+           return;
+        }
+
+        wait_ack.pop();
+        bytes_in_flights-=seg.length_in_sequence_space();
+        pop_=true;
+
+          
+    }
+    if(pop_){
+        fill_window();
+    }
+    if(wait_ack.empty()){
+        re_time_.close_();
+    }
+
+
+}
+</code></pre>
+<h4 id="4tick函数">4.tick()函数</h4>
+<p>这里有有个点要注意，我们重传的时候不用是用send函数，直接吧segment塞到队列即可，因为我们的send函数是累计有多少为确认的功能的。</p>
+<pre><code class="language-c++">void TCPSender::tick(const size_t ms_since_last_tick) { 
+    DUMMY_CODE(ms_since_last_tick); 
+ 
+    if(!re_time_.tick_time(ms_since_last_tick)){
+        return;
+    }
+    
+    if(wait_ack.empty()){
+        re_time_.close_();
+        return;
+    }
+    
+    TCPSegment seg=wait_ack.front();
+    //这里不能掉send函数，因为不需要记录
+    _segments_out.push(wait_ack.front());
+    re_time_.double_time(receiver_window_size_,seg);
+    re_time_.restart();
+
+
+    
+}
+</code></pre>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[CS144-Lab2]]></title>
+        <id>https://wannan123.github.io/post/cs144-lab2/</id>
+        <link href="https://wannan123.github.io/post/cs144-lab2/">
+        </link>
+        <updated>2023-02-28T08:51:39.000Z</updated>
+        <content type="html"><![CDATA[<h1 id="lab2the-tcp-receiver">Lab2（the TCP receiver）</h1>
+<p>OK！完成Lab2啦，本次实验用时3天，在这一周内补完了第三章传输层的理论知识，本次实验主要是实现了一个TCP接收器，它结合了前两次实验：ByteStream和重组器，对它两进行一个上层分装，我们还是来看看总体图：</p>
+<p><img src="https://wannan123.github.io/post-images/1677584429689.png" alt="" loading="lazy"><br>
+我们可以看到Receiver是在重组器之上的，所以我们这个实验的总体思路是Reciever接收到乱序的段然后塞给重组器最后写入内存中，本次实验还是有点难度，值得思考的（对于我这个小白来说~）那么我们开启Lab2的欢快之旅吧！</p>
+<h2 id="1-64位索引和32位索引的转化translating">1. 64位索引和32位索引的转化（Translating）</h2>
+<p>我们先上TCP段图:</p>
+<figure data-type="image" tabindex="1"><img src="https://wannan123.github.io/post-images/1677584444209.png" alt="" loading="lazy"></figure>
+<p>可以看到第二行是序号（Sequno），代表着这一段的序号，我们在Lab1中有用到每一次发来字符段的索引，那个索引就是用序号转化过来的，当然，我们不可能直接将seqno拿过来当index，因为在TCP生成序号的时候，初始序号（SYN）是32位的一个随机数，这样保证了TCP接收多个sender传来的segment的时候造成的混乱，所以给每个sender都随机生成一个数字。但是我们不能直接拿这个随机数来当索引，要不然太麻烦了，所以我们想把它转化一下，也就是所谓的标准化，这样方便重组。</p>
+<p>因为32位序号包含的范围不是很大，所以TCP的序号它采用一种环形的序号组，也就是如果越界的时候就从头开始。但是我们的index可不想这样做，所以我们采用64位编码方式，理解了这个我们看看它的大致样子：</p>
+<figure data-type="image" tabindex="2"><img src="https://wannan123.github.io/post-images/1677584736690.png" alt="" loading="lazy"></figure>
+<p>我们接收到的是seqno，我们需要将它转化为absolute seqno，因为index只需要加一，所以不需要管。我们需要实现两个函数： <strong>wrap</strong> 和 <strong>unwrap</strong></p>
+<ul>
+<li>
+<p><strong>wrap() ：</strong></p>
+<p>Convert absolute seqno → seqno，这个相当比较轻松，我们只需要将absolute seqno加上seqno的初始序号（SYN）再对对2的32次方取余，即可得到seqno，因为seqno是环形的，所以取余即可</p>
+<pre><code class="language-c++">WrappingInt32 wrap(uint64_t n, WrappingInt32 isn) {
+    DUMMY_CODE(n, isn);
+    uint64_t t=isn.raw_value()+n;
+    uint32_t seqno=t % (1ul &lt;&lt; 32);
+    //uint32_t temp=static_cast&lt;uint32_t&gt;(t);
+    return WrappingInt32{seqno};
+}
+</code></pre>
+</li>
+<li>
+<p><strong>unwrap() ：</strong></p>
+<p>Convert seqno → absolute seqno，这个就相对难去想了，首先，seqno是环形的，它一个值可能会对应多个abs seq 例如。  ISN 为零时，seqno “17” 对应于 17 的绝对 seqno，还有 2^32 + 17，或 2^33 + 17，或 2^34 + 17，等等，所以我们这里需要引入一个checkpoint的值，这个checkpoint相当于Receiver的ACKno也就是下一个希望接收到的序号，这样也就让我们知道到底对应哪一个值了，其实想理解这个函数，我觉得不需要特别复杂的数学算法，我们只需要拿出我们的小本本，随手画一画就能找到规律啦！</p>
+</li>
+</ul>
+<figure data-type="image" tabindex="3"><img src="https://wannan123.github.io/post-images/1677584756374.png" alt="" loading="lazy"></figure>
+<pre><code>主题思路是我们把checkpoint转化为seqno的然后看看它与n的offset，然后再转回来加上这个offset就搞定了。因为我们这里用的是int_64来存abs_n，它的范围为[-2^32,2^32-1]所以如果超过2的32次方，则会变为负数，所以我们需要加上2^32。
+
+```c++
+uint64_t unwrap(WrappingInt32 n, WrappingInt32 isn, uint64_t checkpoint) {
+    DUMMY_CODE(n, isn, checkpoint);
+    WrappingInt32 s_check=wrap(checkpoint,isn);
+    int32_t offset=n-s_check;
+    int64_t ret=checkpoint+offset;
+    if(ret&lt;0){
+        return ret+(1ul &lt;&lt; 32);
+    }else{
+        return ret;
+    }
+```
+</code></pre>
+<h2 id="2-实现tcpreceiver">2. 实现TCPReceiver</h2>
+<p>实现这个部分还是需要一点时间的，我花了基本上一天的时间去阅读tcp_helpers里面的 tcp_segment 和tcp_header 两个实例和官方文档，我觉得这个工作还是很有必要的，segment包装了header，header是格外重要的，我们看到最上面那个tcp segment 图，payload以上的部分为head，其实阅读源码就可以更加理解校验和是个怎样工作的，我们可以看这个这段代码：</p>
+<pre><code class="language-c++">    const uint8_t fl_b = p.u8();                  // byte including flags
+    urg = static_cast&lt;bool&gt;(fl_b &amp; 0b0010'0000);  // binary literals and ' digit separator since C++14!!!
+    ack = static_cast&lt;bool&gt;(fl_b &amp; 0b0001'0000);
+    psh = static_cast&lt;bool&gt;(fl_b &amp; 0b0000'1000);
+    rst = static_cast&lt;bool&gt;(fl_b &amp; 0b0000'0100);
+    syn = static_cast&lt;bool&gt;(fl_b &amp; 0b0000'0010);
+    fin = static_cast&lt;bool&gt;(fl_b &amp; 0b0000'0001);
+</code></pre>
+<p>其实就是原码取反然后相加最后为0FFFFFFFFF的一个过程，这里可以去补一下USTC的这块讲解，我记得实在UDP那里讲过，感觉原理差不多。我们之后需要tcp_segment里的head来进行编写。</p>
+<p>我们需要实现四个函数，我们一个一个攻破！</p>
+<ul>
+<li>
+<p><strong>void segment_received(const TCPSegment &amp;seg);</strong></p>
+<p>这个函数是这一部分的难点，你需要判断到来的序号是否为SYN，如果是第一次出现SYN你需要记录一下，然后在此之后出现SYN的话就说明是多余的，所以直接return即可，这里其实埋下了一个坑点，我也是查看网上博客才知道的，这里SYN和FIN都是带有数据包的，所以不能直接返回，不然是过不了测试的。所以我们需要对第一次到来的SYN也要进行处理（给reassembler），而且你不能遇到FIN就返回（这也是我出现错误的点，足足让我debug好长时间...）另一个点在于checkpoint的选取，你不能直接选ackno，因为这个段是乱序的，有可能给你发一个很后的段，所以我们采用写了多少个段来解决，最后写入reassembler就行。</p>
+<pre><code class="language-c++">void TCPReceiver::segment_received(const TCPSegment &amp;seg) {
+    DUMMY_CODE(seg);
+    if(!is_syn &amp;&amp; !seg.header().syn){return;}
+    if(is_syn &amp;&amp; seg.header().syn){return;}
+    //if(is_fin){return;}//不要返回，万一提前遇到fin就寄了。
+    if(seg.header().fin){
+        is_fin=true;
+    }
+    if(seg.header().syn &amp;&amp; !is_syn){
+        syn=seg.header().seqno;
+        is_syn=true;
+        //return;//这是个坑，syn其实也有数据
+    }
+    //这里一定要用written,seg的ackno有可能是在真正checkpoint前后的。
+    uint64_t checkpoint=_reassembler.stream_out().bytes_written()+1;
+    uint64_t abs_seg=unwrap(seg.header().seqno,syn,checkpoint);
+
+    uint64_t _index = abs_seg - 1 + static_cast&lt;uint64_t&gt;(seg.header().syn);
+    string segment=seg.payload().copy();
+    _reassembler.push_substring(segment,_index,seg.header().fin);
+    
+}
+</code></pre>
+</li>
+<li>
+<p><strong>std::optional<WrappingInt32> ackno() const;</strong></p>
+<p>这里就相对简单了，这里的ackno也是采取用written来解决，值得注意的是，SYN和FIN是带有数据的，别忘了就好~</p>
+<pre><code class="language-c++">optional&lt;WrappingInt32&gt; TCPReceiver::ackno() const { 
+    if(!is_syn){
+        return{};
+    }
+    uint64_t has_written=_reassembler.stream_out().bytes_written()+1;
+    if (stream_out().input_ended()){
+        return wrap(has_written+1,syn);
+    }
+    return wrap(has_written,syn);
+
+}
+</code></pre>
+</li>
+<li>
+<p><strong>size_t TCPReceiver::window_size() const</strong></p>
+<pre><code class="language-c++">size_t TCPReceiver::window_size() const { return stream_out().remaining_capacity(); }
+</code></pre>
+</li>
+</ul>
+<p>当我们思考完函数后其实我们就知道我们还需要再private里添加几个值，这也是我一直的思考问题的方式</p>
+<pre><code class="language-c++">class TCPReceiver {
+    //! Our data structure for re-assembling bytes.
+    
+
+    StreamReassembler _reassembler;
+    //! The maximum number of bytes we'll store.
+    size_t _capacity;
+    WrappingInt32 syn{0};
+    bool is_syn=false;
+    bool is_fin=false;
+</code></pre>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[CS144-Lab1]]></title>
+        <id>https://wannan123.github.io/post/cs144-lab1/</id>
+        <link href="https://wannan123.github.io/post/cs144-lab1/">
+        </link>
+        <updated>2023-02-28T08:51:02.000Z</updated>
+        <content type="html"><![CDATA[<h1 id="lab1stitch-substrings-into-a-byte-stream">Lab1（stitch substrings into a byte stream）</h1>
+<p>​		我们知道在TCP传输时当它传入网络核心时由于多主机同时发送的原因，有可能在一个交换机节点中形成一个队列，它会将接收到的信息打乱然后重新发送，由此在TCP接收器内部其实时接收到一堆无序的段，只有将他们拼接后才能读。本次实验是将一段段无序的字符串拼接成一个有序的字符串我们需要实现一个StreamReassembler对象类，他就是将一堆乱序的字符段重新组合成有序的字符流写入网络内存中，也就是我们上一期实验z中实现的的ByteStream,让我们先来了解一下我们前五个实验需要干什么<br>
+<img src="https://wannan123.github.io/post-images/1677584392035.png" alt="" loading="lazy"></p>
+<p>由上图可以知道，Socket相当于一个传送门，你可以把它想象成哆啦A梦里的那个传送门，你从这里发送一条请求，在另一处就会就受到，理解上图，我们本次实验需要做StreamReassembler这个部分，相当于接收到网络传送来的无序的Segment，然后重新组装一下，发送给TCPReceive模块。</p>
+<h2 id="1get-start">1.Get start !</h2>
+<p>​		本次实验，历经1周的时间，期间也是更着中科大的B站课程把第二单元看完了，实验用时2天的时间，由于第一次实验的经历，本次实验也会顺畅一点，本次实验我更加的熟悉了GIT的操作，以及向小伙伴请教学会了如何调试代码，其实也就是去运行tests里的可执行文件然后看看输出，期间我也是遇到了很多的坑，接下来我来慢慢给大家讲述~</p>
+<p>理解本次实验的关键是理解下图：<br>
+<img src="https://wannan123.github.io/post-images/1677584411268.png" alt="" loading="lazy"></p>
+<p>期间我们主要是完成图中 capacity 的部分，我们可以理解绿色的段为已经排好序的部分，红色部分为新来的未排序的部分，蓝色的部分为已经写入的（这部分不属于我们操心的范围），它的箭头方向也是说明了index的大小升高趋势，first unacceptable往右是多余的部分，我们需要删除它。指导书中有一个小提示是：如何处理不一致的子字符串？你可以假设它们不存在。也就是说，你可以假设你有一段已经排序号整理好的stream，然后不断地填充，理解这个很重要，我们根据lab0我们在此处也需要用deque来定义一个缓冲队列，这个队列就相当于你假设的排序好的，然后再定义一个bool类型的队列来指明这个队列中拿些字符串已经排序号。如果你还是不能理解，你可以想象它为一个没坐满的火车，然后每次都有人来上火车，直到火车坐满为止~</p>
+<p>根据test的内容来看，其实这个模块的调用流程是：创建StreamReassembler--&gt;传来一段字符串--&gt;再传另一段字符串--&gt;最后写入内存中。</p>
+<h2 id="3数据结构">3.数据结构</h2>
+<p>​		经过上面的分析我们可以得到private的内容：</p>
+<pre><code class="language-c++">  private:
+    // Your code here -- add private members as necessary.
+
+    ByteStream _output;  //!&lt; The reassembled in-order byte stream
+    size_t _capacity;    //!&lt; The maximum number of bytes
+    size_t unassembled_byte;
+    size_t emptyn;
+    size_t eof_index=0;
+    bool is_eof=false;
+
+    bool empty_;
+    std::deque&lt;bool&gt; flag;
+    std::deque&lt;char&gt; Stream_Reassemble;
+</code></pre>
+<p>这里的empty_和emptyn其实有点多余，我们可以忽略不记</p>
+<h2 id="4实现算法">4.实现算法</h2>
+<p>​		我们首先要定义边界，也就是上图中first_read和first_unaccept我们用这两个相当于我们的索引边界，我们为什么不定义unassemble呢？因为它其实是不断动态变化的，所以我们没必要管它，哦对了，其实整个first read到first unaccept其实也是动态变动的，你可以把它想象为一个管道不断地向前移，因为我们其实利用了双向队列的pop和emplace_back方法来实现填充的，理解这一点对下面的代码很重要。</p>
+<p>​		1、首先来定义边界：</p>
+<pre><code class="language-c++">	size_t first_read=_output.bytes_written();
+    size_t first_unaccept=first_read+_capacity;
+</code></pre>
+<p>​		然后我们需要如果碰到不合适的范围直接返回：</p>
+<pre><code class="language-c++">	if(index&gt;=first_unaccept||index+data.length()&lt;first_read){return;}
+</code></pre>
+<p>​		2、接着我们需要去裁剪一下范围，就是裁去多余的部分：</p>
+<pre><code class="language-c++"> 	size_t index_=index;
+    size_t len=data.length();
+    if(index_&lt;first_read)index_=first_read;
+    if(index+len&gt;=first_unaccept)len=first_unaccept-index;
+</code></pre>
+<p>你可以把index理解为初始下表，index+data.length()为最终下表。</p>
+<p>​		3、接着我们就可以进行填充啦：</p>
+<pre><code class="language-c++">    for(size_t i=index_;i&lt;index+len;i++){
+        //cerr&lt;&lt;&quot;i:&quot;&lt;&lt;i&lt;&lt;endl;
+        if(!flag[i-first_read]){
+            emptyn++;
+            unassembled_byte++;
+            Stream_Reassemble[i-first_read]=data[i-index];
+            flag[i-first_read]=true;//加空字符没事;
+
+        }
+    }
+</code></pre>
+<p>这里我们需要</p>
+<p>​		4、我们需要填入绿色的部分：</p>
+<pre><code class="language-c++">    //开始写入
+    std::string buffer=&quot;&quot;;
+    //cerr&lt;&lt;&quot;flag&quot;&lt;&lt;flag.front()&lt;&lt;endl;
+    while(flag.front()){
+        buffer+=Stream_Reassemble.front();
+        Stream_Reassemble.pop_front();
+        flag.pop_front();
+        flag.emplace_back(false);
+        Stream_Reassemble.emplace_back('\0');
+    }
+
+</code></pre>
+<p>我们可以在大脑中想象，如果一列火车(从小放大来看）只来了1，3，4车厢，我们这里在填入的时候只会填入第一列，因为第二列的bool值为0所以只能等下次2来，所以这样就保证了顺序的进行~别忘了在删除第一个后还要去emplace back一下。</p>
+<p>​		5、写入：</p>
+<pre><code class="language-c++">    if(buffer.length()&gt;0){
+        stream_out().write(buffer);
+        unassembled_byte-=buffer.length();
+        emptyn-=buffer.length();
+    }
+</code></pre>
+<p>​		6、最后判断eof:</p>
+<pre><code class="language-c++">    if(eof){
+        eof_index=index+len;
+        is_eof=true;
+    }
+    // cerr&lt;&lt;&quot;is_eof:&quot;&lt;&lt;is_eof&lt;&lt;endl;
+    if(eof_index==_output.bytes_written()&amp;&amp;is_eof){
+        _output.end_input();
+        
+    }
+</code></pre>
+<p>这里可把我坑惨了，由于我一直没理解它eof的意义，所以一直卡着没过去，后来cerr之后才知道，我们需要在对象里声明一个 is_eof=false的bool值，来记录这此发来的字符串是否为eof结尾，所以我们需要有一个变量来记录一下，因为他在不断的传来segment时它的eof是会变的。</p>
+<p>最后上完整代码：</p>
+<pre><code class="language-c++">StreamReassembler::StreamReassembler(const size_t capacity) : 
+    
+    _output(capacity), 
+    _capacity(capacity),
+    unassembled_byte(0),
+    emptyn(0),
+    empty_(true),
+    flag(capacity,false),
+    Stream_Reassemble(capacity,'\0'){}
+
+//! \details This function accepts a substring (aka a segment) of bytes,
+//! possibly out-of-order, from the logical stream, and assembles any newly
+//! contiguous substrings and writes them into the output stream in order.
+
+void StreamReassembler::push_substring(const string &amp;data, const size_t index, const bool eof) {
+    //DUMMY_CODE(data, index, eof);
+    //先定义边界：first_read=写入的，first_unaccept=first_read+cap
+    size_t first_read=_output.bytes_written();
+    size_t first_unaccept=first_read+_capacity;
+    if(index&gt;=first_unaccept||index+data.length()&lt;first_read){return;}
+    //delete
+    size_t index_=index;
+    size_t len=data.length();
+    if(index_&lt;first_read)index_=first_read;
+    if(index+len&gt;=first_unaccept)len=first_unaccept-index;
+    //把没有填过的填入Reasssable,start=index_,end=index_+len;
+    //cerr&lt;&lt;&quot;INDEX:&quot;&lt;&lt;index_&lt;&lt;&quot;end:&quot;&lt;&lt;index_+len&lt;&lt;endl;
+    for(size_t i=index_;i&lt;index+len;i++){
+        //cerr&lt;&lt;&quot;i:&quot;&lt;&lt;i&lt;&lt;endl;
+        if(!flag[i-first_read]){
+            emptyn++;
+            unassembled_byte++;
+            Stream_Reassemble[i-first_read]=data[i-index];
+            flag[i-first_read]=true;//架空字符没事;
+
+        }
+    }
+    //开始写入
+    std::string buffer=&quot;&quot;;
+    //cerr&lt;&lt;&quot;flag&quot;&lt;&lt;flag.front()&lt;&lt;endl;
+    while(flag.front()){
+        
+        
+        buffer+=Stream_Reassemble.front();
+        Stream_Reassemble.pop_front();
+        flag.pop_front();
+        flag.emplace_back(false);
+        Stream_Reassemble.emplace_back('\0');
+    }
+
+    //cerr&lt;&lt;&quot;HEE:&quot;&lt;&lt;buffer&lt;&lt;&quot;HH:&quot;&lt;&lt;data&lt;&lt;endl;
+    if(buffer.length()&gt;0){
+        stream_out().write(buffer);
+        unassembled_byte-=buffer.length();
+        emptyn-=buffer.length();
+    }
+
+    //
+    //cerr&lt;&lt;index+len&lt;&lt;endl;
+
+
+    // if(eof&amp;&amp;index+len==_output.bytes_written()){
+    //     _output.end_input();
+    // }
+
+    if(eof){
+        eof_index=index+len;
+        is_eof=true;
+    }
+    // cerr&lt;&lt;&quot;is_eof:&quot;&lt;&lt;is_eof&lt;&lt;endl;
+    if(eof_index==_output.bytes_written()&amp;&amp;is_eof){
+        _output.end_input();
+        
+    }
+    if(emptyn==0){
+        empty_=true;
+    }
+}
+
+size_t StreamReassembler::unassembled_bytes() const { return {unassembled_byte}; }
+
+bool StreamReassembler::empty() const {return unassembled_bytes()==0; }
+</code></pre>
+]]></content>
+    </entry>
+    <entry>
+        <title type="html"><![CDATA[CS144-Lab0]]></title>
+        <id>https://wannan123.github.io/post/cs144-lab0/</id>
+        <link href="https://wannan123.github.io/post/cs144-lab0/">
+        </link>
+        <updated>2023-02-28T08:46:41.000Z</updated>
+        <content type="html"><![CDATA[<h1 id="lab0networking-warmup">Lab0（networking warmup）</h1>
+<h2 id="1-前言">1. 前言</h2>
+<p>​		lab0是作为整个实验的热身实验，本实验让我体验到了计算机网络是如何交互的，通过第一个小实验感受到了TCP的建立过程，在第三个实验中亲自动手写了一个Socket来感受第一个小实验的建立过程，在第四个部分中自己写了一个网络内存更是让我了解到底层的原理。本次实验耗时大概有2，3天的时间，因为网络基础的问题，我是跟着中科大的计网B站课做的，本实验对应着我第一个单元的视频学习完成。.</p>
+<p>​		本实验对我最大的感受就是让我深刻体会到客户端和服务器端的交互过程以及网络IO的使用，其中因为吸加加的基础不够完善，中途补了很多关于吸加加的内容以及关于网络socket的知识，重要的一点是一定要多阅读官方文档，以及理解实验想要让你做什么。希望我能坚持把这一套CS144 LAB做完吧！</p>
+<p>实验要求：</p>
+<p>​	•  使用 https://en.cppreference.com 上的语言文档作为资源。</p>
+<p>​	• 切勿使用 malloc() 或 free()。</p>
+<p>​	• 切勿使用新建或删除。</p>
+<p>​	• 基本上从不使用原始指针(*)，只有在必要时才使用“智能”指针（唯一指针或共享指针）。</p>
+<p>​	• 避免使用模板、线程、锁和虚函数。  （您不需要在 CS144 中使用它们。）</p>
+<p>​	• 避免使用 C 风格的字符串 (char *str) 或字符串函数（strlen()、strcpy()）这些很容易出错请改用 std::string。</p>
+<p>​	• 永远不要使用 C 风格的转换（例如，(FILE *)x）。 如果必须，请使用 C++ 静态转换。</p>
+<p>​	• 更喜欢通过 const 引用传递函数参数（例如：const Address &amp; address）。</p>
+<p>​	• 将每个变量设为常量，除非它需要改变。</p>
+<p>​	• 将每个方法设为常量，除非它需要改变对象。</p>
+<p>​	• 避免使用全局变量，并为每个变量提供尽可能小的范围。</p>
+<p>​	• 在提交作业之前，请运行make format 规范编码风格。</p>
+<h2 id="2手工搭建网络networking-warmup">2.手工搭建网络（networking warmup）</h2>
+<p>​	这一部分就按照指导书上一步一步来就好啦</p>
+<p>​	在 Web 浏览器中，访问 http://cs144.keithw.org/hello 并观察结果。你会看到Hello CS144!</p>
+<p>​	现在，您将手动执行与浏览器相同的操作。</p>
+<ol>
+<li>远程链接</li>
+</ol>
+<pre><code>telnet cs144.keithw.org http
+</code></pre>
+<pre><code>2. 这告诉服务器 URL 的路径部分
+</code></pre>
+<pre><code>GET /hello HTTP/1.1
+</code></pre>
+<pre><code>3. 这告诉服务器 URL 的主机部分
+</code></pre>
+<pre><code>Host: cs144.keithw.org
+</code></pre>
+<p>再按一次回车建立连接。</p>
+<p>如果一切顺利，您将看到与您的浏览器看到的相同的响应，前面是告诉浏览器如何解释响应的 HTTP 标头。</p>
+<p>此实验对应着第3个实验，由于我没有斯坦福的邮箱，所以邮件实验做不了，但是可以补充的一点，我们的邮箱一般是是用POP3/IMAP和SMTP协议来通信的，<strong>SMTP相当于把写好的邮件推上去，POP3/IMAP相当于把邮件拉下来</strong>。POP3/IMAP两种协议不同的点在于，POP3适合离线操作，它是把邮件从服务器端下载下来然后让用户去查看，而IMAP是做了一个实时同步，也就是你随时改，服务器的邮件也会随时更改，<em><strong>在这里我们一般用的QQ邮箱就是使用IMAP协议的。</strong></em></p>
+<h2 id="3搭建虚拟服务器listening-and-connecting">3.搭建虚拟服务器（Listening and connecting）</h2>
+<p>​	现在是时候尝试成为一个简单的服务器：等待客户端连接到它的那种程序。</p>
+<ol>
+<li>在一个终端窗口中，在您的 VM 上运行</li>
+</ol>
+<pre><code>netcat -v -l -p 9090
+</code></pre>
+<pre><code>2. 保持 netcat 运行。 在另一个终端窗口中
+</code></pre>
+<pre><code>telnet localhost 9090
+</code></pre>
+<p>​	如果一切顺利，netcat 将打印类似“收到来自本地主机 53500 的连接！这样你可以再两个终端上面进行交互聊天啦！</p>
+<h2 id="4-使用os流套接字编写网络程序os-stream-socket">4 使用OS流套接字编写网络程序（OS stream socket）</h2>
+<p>​	您将利用Linux内核和大多数其他操作系统提供的功能：在两个程序（一个在您的计算机上运行，另一个在Internet上的不同计算机上运行）之间创建可靠的双向有序字节流的能力（例如，Web服务器，如Apache或nginx，或netcat程序）。此功能称为流套接字，<strong>通俗一点来说socket就相当于哆啦A梦里的传送门一样</strong></p>
+<p>​	对于您的程序和 Web 服务器，套接字看起来像一个普通的文件描述符（类似于磁盘上的文件，或者类似于 stdin 或 stdout I/O 流）。当连接两个流套接字时，写入一个套接字的任何字节最终将以相同的顺序从另一台计算机上的另一个套接字输出，套接字就相当于管道一样。</p>
+<p>​	通常，连接两端操作系统的工作是将“尽力而为的数据报”（Internet 提供的抽象）转换为“可靠的字节流”（应用程序通常需要的抽象）。两台计算机必须合作以确保流中的每个字节最终都在其适当的位置上被传送到另一端的流套接字。</p>
+<p>​	您将简单地使用操作系统预先存在的对传输控制协议的支持。您将编写一个名为“webget”的程序来创建一个 TCP 流套接字、连接到一个 Web 服务器并获取一个页面——就像您之前在本实验中所做的那样。在以后的实验中，您将实现这种抽象的另一面，通过自己实现传输控制协议来从不那么可靠的数据报中创建可靠的字节流</p>
+<p>​	本实验主要需要仔细阅读4篇官方文档：</p>
+<ol>
+<li>
+<p>https://cs144.github.io/doc/lab0/class_file_descriptor.html（）</p>
+</li>
+<li>
+<p><a href="https://cs144.github.io/doc/lab0/class_socket.html">Sponge: Socket Class Reference (cs144.github.io)</a></p>
+</li>
+<li>
+<p><a href="https://cs144.github.io/doc/lab0/class_t_c_p_socket.html">Sponge: TCPSocket Class Reference (cs144.github.io)</a></p>
+</li>
+<li>
+<p><a href="https://cs144.github.io/doc/lab0/class_address.html">Sponge: Address Class Reference (cs144.github.io)</a></p>
+<p>主要对印着每个函数的介绍，当然啦，你也可以直接去 **libsponge/util ** 里面找到相应的底层函数，此实验你可以仿照文件的读写来实现。</p>
+</li>
+</ol>
+<pre><code class="language-c++">void get_URL(const string &amp;host, const string &amp;path) {
+    // Your code here.
+
+    // You will need to connect to the &quot;http&quot; service on
+    // the computer whose name is in the &quot;host&quot; string,
+    // then request the URL path given in the &quot;path&quot; string.
+    // Then you'll need to print out everything the server sends back,
+    // (not just one call to read() -- everything) until you reach
+    // the &quot;eof&quot; (end of file).
+    TCPSocket sock1;
+    sock1.connect(Address(host,&quot;http&quot;));
+    
+    sock1.write(&quot;GET &quot;+path+&quot; HTTP/1.1\r\nHost: &quot;+host+&quot;\r\n\r\n&quot;);
+    sock1.shutdown(SHUT_WR);
+    
+    while(!sock1.eof()){
+        cout&lt;&lt;sock1.read();
+    }
+    sock1.close();
+    
+
+    cerr &lt;&lt; &quot;Function called: get_URL(&quot; &lt;&lt; host &lt;&lt; &quot;, &quot; &lt;&lt; path &lt;&lt; &quot;).\n&quot;;
+    cerr &lt;&lt; &quot;Warning: get_URL() has not been implemented yet.\n&quot;;
+}
+</code></pre>
+<p>这里我们首先要实现一个TCPSocket对象，我们从接收到的两个不可变的字符引用 <strong>const string &amp;host, const string &amp;path</strong> 中可以知道，我们需要连接这个地址，那么我们用Address类来实现，他的作用是将url转换成 <strong>IPv4地址</strong>，这里的**shutdown()**函数则是关闭这个套接字，让他不再具有读写功能，一定要记住，<strong>read()</strong> 函数要在循环里面，不然会出现无限循环哦，如果一切顺利，则会出现Hello CS144!</p>
+<h2 id="5内存中的可靠字节流memory-reliable-byte-stream">5.内存中的可靠字节流(memory reliable byte stream)</h2>
+<p>​	此实验则是让你去写一个读写内存，相当于一个buffer(缓冲区)，他的任务是你需要实现读写函数，分别对缓冲区进行修改，就是实现底层的内存逻辑。模拟单线程输入和输出，因此也不存在锁、并发等问题，是一个比较简单但是较为全面的小考验。</p>
+<p>​	本实验需要让你再private中设计数据结构，我的思路是先阅读需要实现的函数，然后再去思考需要到的数据结构那么我们来分析一下每个函数。</p>
+<ol>
+<li><strong>构造函数</strong></li>
+</ol>
+<pre><code class="language-c++">ByteStream(const size_t capacity):stream_len(capacity){};
+</code></pre>
+<p>参数为capacity，代表内存的大小，因此我们需要的参数就有一个要代表内存的大小，这里用<strong>stream_len</strong>表 示，内存是用来存储的，因此当然还要有一个变量来存储写入的字节流，这里用<strong>stream</strong>表示。而该构造函数的目的即是为了将内存的大小进行赋值。由于缓冲区是先进先出的，并且需要可以在前后都能操作，所以我们选择使用双向队列  <em>std::deque&lt;<strong>char</strong>&gt; stream={};</em></p>
+<ol start="2">
+<li><strong>写函数</strong></li>
+</ol>
+<pre><code class="language-c++">size_t write(const std::string &amp;data);
+</code></pre>
+<p>顾名思义我们需要接收字符串并且写入缓冲区，这里需要判断是否越界，</p>
+<p>即<strong>data_len</strong>是否大于<strong>stream_len-stream.size()</strong>，如果大于的话则等于<strong>stream_len-stream.size()</strong></p>
+<p>然后需要记录写下的字节数，我们用hasWrite来表示</p>
+<p>完整代码：</p>
+<pre><code class="language-c++">size_t ByteStream::write(const string &amp;data) {
+    //DUMMY_CODE(data);
+
+    size_t data_len=data.length();//how many byte to wirte
+    //如果datalen+stream的内存大于能力的话，dadalen=capacity-stream的内存
+    if(data_len&gt;stream_len-stream.size()){
+        data_len=stream_len-stream.size();
+    }
+    hasWrite+=data_len;
+    for(size_t i=0;i&lt;data_len;i++){
+        stream.push_back(data[i]);
+        
+    }
+    return data_len;
+}
+</code></pre>
+<ol start="3">
+<li><strong>查看下次输出函数</strong></li>
+</ol>
+<pre><code class="language-c++">std::string peek_output(const size_t len) const;
+</code></pre>
+<p>我们需要从缓冲区中读取长度为len的字节，并返回给一个字符串，此函数将会用于读函数，我们需要注意越界问题，和上一个函数的逻辑是一样的</p>
+<p>完整代码：</p>
+<pre><code class="language-c++">string ByteStream::peek_output(const size_t len) const {
+    //DUMMY_CODE(len);
+    size_t stream_len_=len;
+    std::string stream_peek;//what I want to read
+    if (stream_len_&gt;stream.size()){
+        stream_len_=stream.size();
+    }
+    for(size_t i=0;i&lt;stream_len_;i++){
+        stream_peek.push_back(stream[i]);
+        
+    }
+    //stream_peek=string().assign(stream.begin(),stream.begin()+stream_len_);
+    return stream_peek;
+}
+</code></pre>
+<ol start="4">
+<li><strong>清除已读数据函数</strong></li>
+</ol>
+<pre><code class="language-c++">void ByteStream::pop_output(const size_t len){}
+</code></pre>
+<p>逻辑和上一个函数一样，我们需要将缓冲区的字节都删除，我们用到erase函数来实现，在这里还是需要注意缓冲区越界问题，</p>
+<p>完整代码：</p>
+<pre><code class="language-c++">void ByteStream::pop_output(const size_t len) { 
+    //DUMMY_CODE(len); 
+    size_t stream_len_=len;
+
+    if (stream_len_&gt;stream.size()){
+        stream_len_=stream.size();
+    }
+    hasRead+=stream_len_;
+    
+    for(size_t i=0;i&lt;stream_len_;i++){
+        stream.erase(stream.begin());
+        
+    }
+}
+</code></pre>
+<ol start="5">
+<li><strong>读函数</strong></li>
+</ol>
+<pre><code class="language-c++">std::string ByteStream::read(const size_t len) 
+</code></pre>
+<p>如果实现了上面两个函数，这个函数就变得相当简单了，只需要调用即可</p>
+<pre><code class="language-c++">std::string ByteStream::read(const size_t len) {
+    //DUMMY_CODE(len);
+
+    std::string output=peek_output(len);
+    pop_output(len);
+    return output;
+}
+</code></pre>
+<ol start="6">
+<li><strong>数据结构</strong></li>
+</ol>
+<p>由此我们可以得出我们想要的数据结构有哪些，并且放在private里</p>
+<pre><code class="language-c++">  private:
+    // Your code here -- add private members as necessary.
+
+    
+    std::deque&lt;char&gt; stream={};//stream is memory,
+    size_t stream_len;//memory's cmakeapacity
+    size_t hasWrite=0;//how many Byte has write
+    size_t hasRead=0;
+    bool is_end=false;
+    bool empty =true;//is empty?
+</code></pre>
+<ol start="7">
+<li><strong>函数完整代码</strong></li>
+</ol>
+<pre><code class="language-c++">#include &quot;byte_stream.hh&quot;
+
+// Dummy implementation of a flow-controlled in-memory byte stream.
+
+// For Lab 0, please replace with a real implementation that passes the
+// automated checks run by `make check_lab0`.
+
+// You will need to add private members to the class declaration in `byte_stream.hh`
+
+template &lt;typename... Targs&gt;
+void DUMMY_CODE(Targs &amp;&amp;... /* unused */) {}
+
+using namespace std;
+
+ByteStream::ByteStream(const size_t capacity):stream_len(capacity){ 
+    //DUMMY_CODE(capacity);
+}
+
+size_t ByteStream::write(const string &amp;data) {
+    //DUMMY_CODE(data);
+
+    size_t data_len=data.length();//how many byte to wirte
+    //如果datalen+stream的内存大于能力的话，dadalen=capacity-stream的内存
+    if(data_len&gt;stream_len-stream.size()){
+        data_len=stream_len-stream.size();
+    }
+    hasWrite+=data_len;
+    for(size_t i=0;i&lt;data_len;i++){
+        stream.push_back(data[i]);
+        
+    }
+    return data_len;
+}
+
+//! \param[in] len bytes will be copied from the output side of the buffer
+string ByteStream::peek_output(const size_t len) const {
+    //DUMMY_CODE(len);
+    size_t stream_len_=len;
+    std::string stream_peek;//what I want to read
+    if (stream_len_&gt;stream.size()){
+        stream_len_=stream.size();
+    }
+    for(size_t i=0;i&lt;stream_len_;i++){
+        stream_peek.push_back(stream[i]);
+        
+    }
+    //stream_peek=string().assign(stream.begin(),stream.begin()+stream_len_);
+    return stream_peek;
+}
+
+//! \param[in] len bytes will be removed from the output side of the buffer
+void ByteStream::pop_output(const size_t len) { 
+    //DUMMY_CODE(len); 
+    size_t stream_len_=len;
+
+    if (stream_len_&gt;stream.size()){
+        stream_len_=stream.size();
+    }
+    hasRead+=stream_len_;
+    
+    for(size_t i=0;i&lt;stream_len_;i++){
+        stream.erase(stream.begin());
+        
+    }
+}
+
+//! Read (i.e., copy and then pop) the next &quot;len&quot; bytes of the stream
+//! \param[in] len bytes will be popped and returned
+//! \returns a string
+std::string ByteStream::read(const size_t len) {
+    //DUMMY_CODE(len);
+
+    std::string output=peek_output(len);
+    pop_output(len);
+    return output;
+}
+
+void ByteStream::end_input() {is_end=true;}
+
+bool ByteStream::input_ended() const { return is_end; }
+
+size_t ByteStream::buffer_size() const { return stream.size(); }
+
+bool ByteStream::buffer_empty() const { return stream.empty(); }//error point
+
+bool ByteStream::eof() const { return buffer_empty()&amp;&amp;input_ended(); }
+
+size_t ByteStream::bytes_written() const { return hasWrite; }
+
+size_t ByteStream::bytes_read() const { return hasRead; }
+
+size_t ByteStream::remaining_capacity() const { return stream_len-stream.size(); }
+
+</code></pre>
+<figure data-type="image" tabindex="1"><img src="https://github.com/wannan123/CS144/blob/main/blob/main/lab0/main/note/picture/wallhaven-eox6jk-1674546755768.jpg" alt="" loading="lazy"></figure>
+]]></content>
+    </entry>
+</feed>
